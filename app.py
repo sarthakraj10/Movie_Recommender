@@ -1,104 +1,78 @@
-import streamlit as st
 import pickle
+import streamlit as st
+import requests
 import pandas as pd
-import requests as req
-import gdown
-import time
-from requests.exceptions import RequestException, ConnectionError
-from dotenv import load_dotenv
-import os
 
-# ---------------- Load environment variables ----------------
-load_dotenv()
-tmdb_api_keys = os.getenv('tmdb_API_KEYS')
+def fetch_poster(movie_id):
+    try:
+        url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key=8265bd1679663a7ea12ac168da84d2e8&language=en-US"
+        data = requests.get(url)
+        data.raise_for_status()
+        data = data.json()
+        poster_path = data.get('poster_path', '')
+        if poster_path:
+            return "https://image.tmdb.org/t/p/w500/" + poster_path
+        return "https://via.placeholder.com/500x750?text=No+Image"
+    except:
+        return "https://via.placeholder.com/500x750?text=Error+Loading+Image"
 
-# ---------------- Download pickle files if not present ----------------
+def recommend(movie):
+    try:
+        # Convert the movies dictionary to a DataFrame
+        movies_df = pd.DataFrame(movies)
+        
+        # Find the index of the selected movie
+        index = movies_df[movies_df['title'] == movie].index[0]
+        
+        # Get similarity scores
+        distances = sorted(enumerate(similarity[index]), reverse=True, key=lambda x: x[1])
+        
+        recommended_movie_names = []
+        recommended_movie_posters = []
+        
+        for i in distances[1:6]:
+            movie_id = movies_df.iloc[i[0]].movie_id
+            recommended_movie_posters.append(fetch_poster(movie_id))
+            recommended_movie_names.append(movies_df.iloc[i[0]].title)
+        
+        return recommended_movie_names, recommended_movie_posters
+    except Exception as e:
+        st.error(f"Error in recommendation: {str(e)}")
+        return [], []
 
+st.header('Movie Recommender System')
 
+# Load data with error handling
+try:
+    # Assuming movies is stored as a dictionary in the pickle file
+    movies = pickle.load(open('movies_dict.pkl', 'rb'))
+    
+    # If movies is a dictionary, convert it to DataFrame
+    if isinstance(movies, dict):
+        movies_df = pd.DataFrame(movies)
+    else:
+        movies_df = movies
+        
+    similarity = pickle.load(open('similarity.pkl', 'rb'))
+except FileNotFoundError:
+    st.error("Data files not found. Please ensure movies_dict.pkl and similarity.pkl exist")
+    st.stop()
 
-
-
-# ---------------- Load pickle files ----------------
-movie_dict = pickle.load(open('movies_dict.pkl', 'rb'))
-movies = pd.DataFrame(movie_dict)
-similarity = pickle.load(open('similarity.pkl', 'rb'))
-
-# ---------------- Fetch posters and IMDb links ----------------
-def fetch_posters(movie_id):
-    url = f'https://api.themoviedb.org/3/movie/{movie_id}?api_key={tmdb_api_keys}&language=en-US'
-
-    for attempt in range(3):  # retry up to 3 times
-        try:
-            res = req.get(url, timeout=10)
-            res.raise_for_status()
-            data = res.json()
-
-            if 'success' in data and data['success'] is False:
-                return (
-                    "https://via.placeholder.com/150?text=No+Poster",
-                    "https://www.imdb.com"
-                )
-
-            poster_url = (
-                'https://image.tmdb.org/t/p/w185' + data['poster_path']
-                if data.get('poster_path')
-                else "https://via.placeholder.com/150?text=No+Poster"
-            )
-            imdb_url = (
-                'https://www.imdb.com/title/' + data['imdb_id']
-                if data.get('imdb_id')
-                else "https://www.imdb.com"
-            )
-            return poster_url, imdb_url
-
-        except (ConnectionError, RequestException) as e:
-            print(f"⚠️ Attempt {attempt+1} failed: {e}")
-            time.sleep(2)
-
-    # Fallback if all attempts fail
-    return (
-        "https://via.placeholder.com/150?text=No+Poster",
-        "https://www.imdb.com"
-    )
-
-# ---------------- Recommend movies ----------------
-def recommend_movie(movie_name):
-    movie_index = movies[movies['title'] == movie_name].index[0]
-    distances = similarity[movie_index]
-    movies_list = sorted(
-        list(enumerate(distances)), reverse=True, key=lambda x: x[1]
-    )[1:6]
-
-    recommended_movies = []
-    posters = []
-    imdb_page = []
-
-    for i in movies_list:
-        movie_id = movies.iloc[i[0]].movie_id
-        recommended_movies.append(movies.iloc[i[0]].title)
-        poster_link, imdb_link = fetch_posters(movie_id)
-        posters.append(poster_link)
-        imdb_page.append(imdb_link)
-
-    return recommended_movies, posters, imdb_page
-
-# ---------------- Streamlit UI ----------------
-st.title("🎬 Movie Recommender System")
-
-selected_movie_name = st.selectbox(
-    'Which movie do you like?', movies['title'].values
+# Get movie list from the DataFrame
+movie_list = movies_df['title'].values
+selected_movie = st.selectbox(
+    "Type or select a movie from the dropdown",
+    movie_list
 )
 
-if st.button("Recommend"):
-    names, posters, imdb_pages = recommend_movie(selected_movie_name)
-
-    columns = st.columns(5)
-    for i, col in enumerate(columns):
-        with col:
-            st.text(names[i])
-            st.markdown(
-                f'<a href="{imdb_pages[i]}" target="_blank">'
-                f'<img src="{posters[i]}" alt="{names[i]}" style="width:100%;">'
-                '</a>',
-                unsafe_allow_html=True
-            )
+if st.button('Show Recommendation'):
+    names, posters = recommend(selected_movie)
+    
+    if names:
+        cols = st.columns(5)
+        for i, col in enumerate(cols):
+            with col:
+                st.text(names[i])
+                st.image(posters[i])
+    else:
+        st.warning("No recommendations available for this movie.")
